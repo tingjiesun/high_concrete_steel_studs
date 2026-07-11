@@ -30,6 +30,8 @@ Z_STEEL_MAX = 715.0
 HOLE_X = 260.0
 HOLE1_Z = 515.0
 HOLE2_Z = 265.0
+SLIP_POINT_X = 235.0
+SLIP_POINT_Z = 0.5 * (HOLE1_Z + HOLE2_Z)
 
 TOL = 0.5
 
@@ -48,12 +50,16 @@ setSteelInterfaceName = 'Set-Steel-Interface-YMax'
 setConcreteInterfaceName = 'Set-Concrete-SteelInterface'
 setStudFacesName = 'Set-Stud-Faces'
 setHoleFacesName = 'Set-Concrete-Hole-Faces'
+studSourceFaceSetName = 'Set-shuanding_surface'
+holeSourceFaceSetName = 'Set-shuanding_hole_surface'
 setSteelLoadName = 'Set-Steel-Top-Load'
 setConcreteSupportName = 'Set-Concrete-Bottom-Support'
 
 setXSymConcreteName = 'Set-XSym-Concrete'
 setXSymSteelName = 'Set-XSym-Steel'
 setXSymRebarName = 'Set-XSym-Rebar'
+setSlipSteelNodeName = 'Set-Slip-Steel-Interface-Node'
+setSlipConcreteNodeName = 'Set-Slip-Concrete-Interface-Node'
 
 rpLoadFeatureName = 'RP_LOAD_FEATURE'
 rpSupportFeatureName = 'RP_SUPPORT_FEATURE'
@@ -97,6 +103,52 @@ def faces_by_point(faceArray, check):
         return ()
 
     return faces_from_indices(faceArray, indices)
+
+
+def require_instance_face_set(instance, setName, description):
+    """Return a named part face set inherited by the assembly instance."""
+    if setName not in instance.sets.keys():
+        raise RuntimeError(
+            'Required %s set %s is missing on instance %s. '
+            'Run the corresponding part-generation script first.'
+            % (description, setName, instance.name)
+        )
+
+    faces = instance.sets[setName].faces
+    if len(faces) == 0:
+        raise RuntimeError('%s set %s contains no faces.' % (description, setName))
+
+    return faces
+
+
+def nodes_by_point(nodeArray, check):
+    nodes = []
+
+    for n in nodeArray:
+        x, y, z = n.coordinates
+        if check(x, y, z):
+            nodes.append(n)
+
+    return tuple(nodes)
+
+
+def nearest_node(nodes, target):
+    if len(nodes) == 0:
+        raise RuntimeError('No nodes available near slip measurement point.')
+
+    tx, ty, tz = target
+    bestNode = None
+    bestDistance2 = None
+
+    for n in nodes:
+        x, y, z = n.coordinates
+        distance2 = (x - tx) ** 2 + (y - ty) ** 2 + (z - tz) ** 2
+
+        if bestDistance2 is None or distance2 < bestDistance2:
+            bestDistance2 = distance2
+            bestNode = n
+
+    return bestNode
 
 
 def near_stud_hole(x, y, z):
@@ -175,6 +227,30 @@ def make_node_set(name, nodes):
     return a.sets[name]
 
 
+def make_instance_node_set_from_labels(name, instance, labels):
+    delete_assembly_object(name)
+
+    labels = tuple(labels)
+
+    if len(labels) == 0:
+        print('Warning: node set %s has no nodes and will not be created.' % name)
+        return None
+
+    try:
+        a.SetFromNodeLabels(
+            name=name,
+            nodeLabels=((instance.name, labels),)
+        )
+    except:
+        nodeSeq = instance.nodes.sequenceFromLabels(labels=labels)
+        a.Set(
+            name=name,
+            nodes=nodeSeq
+        )
+
+    return a.sets[name]
+
+
 def create_or_replace_rp(featureName, setName, point):
     delete_assembly_object(setName)
 
@@ -246,32 +322,26 @@ make_face_set(setConcreteInterfaceName, concreteInterfaceFaces)
 make_surface(surfConcreteInterfaceName, concreteInterfaceFaces)
 
 # ------------------------------------------------------------
-# 3. Stud surfaces
-# Surfaces of studs inside concrete holes
+# 3. Stud contact surface from the named part-level face set
 # ------------------------------------------------------------
 
-studFaces = faces_by_point(
-    steelInst.faces,
-    lambda x, y, z:
-        near_stud_hole(x, y, z) and
-        y > Y_INTERFACE + TOL and
-        y < 65.0
+studFaces = require_instance_face_set(
+    steelInst,
+    studSourceFaceSetName,
+    'stud contact'
 )
 
 make_face_set(setStudFacesName, studFaces)
 make_surface(surfStudName, studFaces)
 
 # ------------------------------------------------------------
-# 4. Concrete hole wall surfaces
-# Hole wall surfaces corresponding to stud contact
+# 4. Concrete-hole contact surface from the named part-level face set
 # ------------------------------------------------------------
 
-holeFaces = faces_by_point(
-    concreteInst.faces,
-    lambda x, y, z:
-        near_stud_hole(x, y, z) and
-        y > Y_INTERFACE + TOL and
-        y < 65.0
+holeFaces = require_instance_face_set(
+    concreteInst,
+    holeSourceFaceSetName,
+    'concrete-hole contact'
 )
 
 make_face_set(setHoleFacesName, holeFaces)
@@ -338,7 +408,53 @@ xSymRebarNodes = rebarInst.nodes.getByBoundingBox(
 make_node_set(setXSymRebarName, xSymRebarNodes)
 
 # ------------------------------------------------------------
-# 8. Reference points for loading and support
+# 8. Slip measurement node sets
+# Interface slip is extracted as U3(steel node) - U3(concrete node).
+# The point is placed between the two studs and away from hole contact.
+# ------------------------------------------------------------
+
+steelSlipCandidateNodes = nodes_by_point(
+    steelInst.nodes,
+    lambda x, y, z:
+        abs(y - steelYMax) <= TOL and
+        150.0 <= x <= 320.0 and
+        50.0 <= z <= 630.0 and
+        not near_stud_hole(x, y, z)
+)
+
+concreteSlipCandidateNodes = nodes_by_point(
+    concreteInst.nodes,
+    lambda x, y, z:
+        abs(y - Y_INTERFACE) <= TOL and
+        150.0 <= x <= 320.0 and
+        50.0 <= z <= 630.0 and
+        not near_stud_hole(x, y, z)
+)
+
+slipSteelNode = nearest_node(
+    steelSlipCandidateNodes,
+    (SLIP_POINT_X, steelYMax, SLIP_POINT_Z)
+)
+
+slipConcreteNode = nearest_node(
+    concreteSlipCandidateNodes,
+    (SLIP_POINT_X, Y_INTERFACE, SLIP_POINT_Z)
+)
+
+make_instance_node_set_from_labels(
+    setSlipSteelNodeName,
+    steelInst,
+    (slipSteelNode.label,)
+)
+
+make_instance_node_set_from_labels(
+    setSlipConcreteNodeName,
+    concreteInst,
+    (slipConcreteNode.label,)
+)
+
+# ------------------------------------------------------------
+# 9. Reference points for loading and support
 # ------------------------------------------------------------
 
 create_or_replace_rp(
@@ -371,6 +487,16 @@ print('%s faces: %d' % (setConcreteSupportName, len(concreteBottomFaces)))
 print('%s faces: %d' % (setXSymConcreteName, len(xSymConcreteFaces)))
 print('%s faces: %d' % (setXSymSteelName, len(xSymSteelFaces)))
 print('%s nodes: %d' % (setXSymRebarName, len(xSymRebarNodes)))
+print('%s node label: %d, coord: %s' % (
+    setSlipSteelNodeName,
+    slipSteelNode.label,
+    slipSteelNode.coordinates
+))
+print('%s node label: %d, coord: %s' % (
+    setSlipConcreteNodeName,
+    slipConcreteNode.label,
+    slipConcreteNode.coordinates
+))
 
 print('Created sets:')
 print('  %s' % setSteelInterfaceName)
@@ -382,6 +508,8 @@ print('  %s' % setConcreteSupportName)
 print('  %s' % setXSymConcreteName)
 print('  %s' % setXSymSteelName)
 print('  %s' % setXSymRebarName)
+print('  %s' % setSlipSteelNodeName)
+print('  %s' % setSlipConcreteNodeName)
 print('  %s' % rpLoadSetName)
 print('  %s' % rpSupportSetName)
 

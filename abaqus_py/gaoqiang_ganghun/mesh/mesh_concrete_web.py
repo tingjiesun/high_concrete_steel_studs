@@ -17,7 +17,7 @@ p = model.parts[PART_NAME]
 GLOBAL_MESH_SIZE = 40.0
 
 # Slightly refined mesh near holes
-HOLE_MESH_SIZE = 5.0
+HOLE_MESH_SIZE = 4.0
 TRANSITION_MESH_SIZE = 10.0
 
 # Concrete plate range

@@ -5,7 +5,9 @@ from abaqusConstants import *
 MODEL_NAME = 'HSS_Stud'
 PART_NAME = 'RebarCage'
 MATERIAL_NAME = 'HRB400_Rebar'
-REBAR_DENSITY = 7850.0
+# Unit system: N-mm-tonne-s. 7850 kg/m3 = 7.85e-9 tonne/mm3.
+# Using 7850.0 here makes the reinforcement mass 10^12 times too large.
+REBAR_DENSITY = 7.85e-9
 
 if MODEL_NAME not in mdb.models.keys():
     raise ValueError('Model not found: %s' % MODEL_NAME)

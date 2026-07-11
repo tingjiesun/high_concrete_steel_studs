@@ -7,22 +7,24 @@ import csv
 # User settings
 # ============================================================
 
-ODB_PATH = r'D:\temp\Job-2.odb'
+ODB_PATH = r'D:\temp\Job-3.odb'
 STEP_NAME = 'Step-Pushout-Explicit'
 
 OUT_DIR = os.path.dirname(ODB_PATH)
-OUT_CSV = os.path.join(OUT_DIR, 'U3_RF3_data.csv')
-OUT_PNG = os.path.join(OUT_DIR, 'U3_RF3_curve.png')
+OUT_CSV = os.path.join(OUT_DIR, 'RP_U3_RF3_data.csv')
+OUT_PNG = os.path.join(OUT_DIR, 'RP_U3_RF3_curve.png')
 
 # x-axis and y-axis settings
 X_MIN = 0.0
 X_MAX = 5.0
 
+# Same scale as visual.py:
 # y = abs(RF3) / 1000 / 2
+# If you want the total reaction force, change this to 1000.0.
 RF3_SCALE = 1000.0 * 2.0
 
 # ============================================================
-# Read U3 and RF3 from ODB history output
+# Read RP_LOAD U3 and RF3 from ODB history output
 # ============================================================
 
 odb = openOdb(ODB_PATH, readOnly=True)
@@ -33,38 +35,87 @@ if STEP_NAME not in odb.steps.keys():
 
 step = odb.steps[STEP_NAME]
 
-target_region = None
-target_region_name = None
 
-for region_name, region in step.historyRegions.items():
-    keys = region.historyOutputs.keys()
+def output_keys(region):
+    return region.historyOutputs.keys()
 
-    if 'U3' in keys and 'RF3' in keys:
-        if 'RP_LOAD' in region_name.upper():
-            target_region = region
-            target_region_name = region_name
-            break
 
-        if target_region is None:
-            target_region = region
-            target_region_name = region_name
+def history_region_text(region_name, region):
+    text = region_name
+    try:
+        text = text + ' ' + region.description
+    except:
+        pass
+    return text.upper()
+
+
+def history_candidates_text(step):
+    lines = []
+
+    for region_name, region in step.historyRegions.items():
+        lines.append('%s: %s' % (region_name, output_keys(region)))
+
+    return '\n'.join(lines)
+
+
+def find_rp_u3_rf3_region(step):
+    candidates = []
+
+    for region_name, region in step.historyRegions.items():
+        keys = output_keys(region)
+
+        if 'U3' in keys and 'RF3' in keys:
+            candidates.append((region_name, region))
+
+    if len(candidates) == 0:
+        return None, None
+
+    for region_name, region in candidates:
+        text = history_region_text(region_name, region)
+
+        if 'RP_LOAD' in text:
+            return region_name, region
+
+    for region_name, region in candidates:
+        text = history_region_text(region_name, region)
+
+        if 'RP' in text:
+            return region_name, region
+
+    if len(candidates) == 1:
+        return candidates[0]
+
+    return None, None
+
+
+target_region_name, target_region = find_rp_u3_rf3_region(step)
 
 if target_region is None:
     odb.close()
-    raise RuntimeError('Cannot find history outputs U3 and RF3 in odb.')
+    raise RuntimeError(
+        'Cannot find RP_LOAD history outputs U3 and RF3 in odb. '
+        'Run interaction_load/3_load_interaction.py again before submitting the job. '
+        'Available history outputs:\n%s'
+        % history_candidates_text(step)
+    )
 
 u3_data = target_region.historyOutputs['U3'].data
 rf3_data = target_region.historyOutputs['RF3'].data
 
 rows = []
+count = min(len(u3_data), len(rf3_data))
 
-for (t1, u3), (t2, rf3) in zip(u3_data, rf3_data):
-    rows.append((t1, u3, rf3))
+for i in range(count):
+    t_u3, u3 = u3_data[i]
+    t_rf3, rf3 = rf3_data[i]
+
+    rows.append((t_u3, u3, rf3))
 
 odb.close()
 
 # ============================================================
-# Export CSV: only time, U3, RF3
+# Export CSV
+# U3 is the displacement of RP_LOAD, not interface slip.
 # ============================================================
 
 with open(OUT_CSV, 'w') as f:
@@ -78,7 +129,7 @@ with open(OUT_CSV, 'w') as f:
 
 # ============================================================
 # Plot PNG
-# x = abs(U3), fixed 0-5
+# x = abs(U3 at RP_LOAD), fixed 0-5
 # y = abs(RF3) / 1000 / 2
 # ============================================================
 
@@ -105,10 +156,8 @@ Y_MAX = max(ys)
 if Y_MAX <= 0.0:
     Y_MAX = 1.0
 
-# Add a little headroom
 Y_MAX = Y_MAX * 1.08
 
-# Try matplotlib first. If unavailable in Abaqus Python, fallback to SVG.
 try:
     import matplotlib
     matplotlib.use('Agg')
@@ -120,9 +169,9 @@ try:
     plt.xlim(X_MIN, X_MAX)
     plt.ylim(Y_MIN, Y_MAX)
 
-    plt.xlabel('Slip |U3| (mm)')
+    plt.xlabel('RP_LOAD displacement |U3| (mm)')
     plt.ylabel('|RF3| / 1000 / 2 (kN)')
-    plt.title('U3-RF3 curve')
+    plt.title('RP_LOAD U3-RF3 curve')
 
     plt.grid(True, linestyle='--', linewidth=0.6, alpha=0.5)
 

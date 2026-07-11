@@ -53,9 +53,9 @@ hole_points = (
 
 # Hole segments, unchanged
 hole_segments = (
-    (19.0, 5.0),
-    (13.0, 67.0),
-    (22.0, 8.0),
+    (19.4, 5.0),
+    (13.4, 67.0),
+    (22.4, 8.0),
 )
 
 CUT_FROM_Y_MIN_FACE = True
@@ -67,9 +67,9 @@ Y2 = Y1 + 67.0
 Y3 = Y2 + 8.0
 
 # Hole radii
-R19 = 19.0 / 2.0
-R13 = 13.0 / 2.0
-R22 = 22.0 / 2.0
+R19 = 19.4 / 2.0
+R13 = 13.4 / 2.0
+R22 = 22.4 / 2.0
 R_MAX = R22
 
 # O-grid-like partition radii
@@ -473,12 +473,101 @@ print('Concrete size: %.1f x %.1f x %.1f' % (
 ))
 print('Hole point 1: x = %.1f, z = %.1f' % (hole_1_x, hole_1_z))
 print('Hole point 2: x = %.1f, z = %.1f' % (hole_2_x, hole_2_z))
-print('Hole segments unchanged: D19-L5, D13-L67, D22-L8')
+print('Hole segments: D19.4-L5, D13.4-L67, D22.4-L8')
 print('O-grid partition radii: %.1f, %.1f, %.1f' % (
     O_GRID_R1,
     O_GRID_R2,
     O_GRID_R3,
 ))
 print('New part kept: %s' % FINAL_PART_NAME)
+
+mdb.save()
+
+# ============================================================
+# Appended contact surface: stepped hole cylindrical walls only
+# ============================================================
+
+import math
+
+_HOLE_SURFACE_NAME = 'shuanding_hole_surface'
+_HOLE_FACE_SET_NAME = 'Set-shuanding_hole_surface'
+_HOLE_SAMPLE_ANGLES = (45.0, 135.0, 225.0, 315.0)
+
+
+def _surface_indices_to_mask(indices):
+    indices = sorted(list(set(indices)))
+    if len(indices) == 0:
+        raise RuntimeError('No faces were selected for %s.' % _HOLE_SURFACE_NAME)
+
+    n_words = indices[-1] // 32 + 1
+    words = [0] * n_words
+    for index in indices:
+        words[index // 32] = words[index // 32] | (1 << (index % 32))
+
+    return '[#' + ' #'.join(['%x' % word for word in words]) + ' ]'
+
+
+def _append_nearest_face_index(part, point, description):
+    closest = part.faces.getClosest(
+        coordinates=(point,),
+        searchTolerance=1.0e-4,
+    )
+    if 0 not in closest:
+        raise RuntimeError('Cannot locate %s at %s.' % (description, point))
+
+    face, closest_point = closest[0]
+    distance2 = (
+        (closest_point[0] - point[0]) ** 2 +
+        (closest_point[1] - point[1]) ** 2 +
+        (closest_point[2] - point[2]) ** 2
+    )
+    if distance2 > 1.0e-8:
+        raise RuntimeError('%s is not on the intended cylindrical wall.' % description)
+
+    face_index = face.index
+    if callable(face_index):
+        face_index = face_index()
+    return int(face_index)
+
+
+if _HOLE_SURFACE_NAME in final_part.surfaces.keys():
+    del final_part.surfaces[_HOLE_SURFACE_NAME]
+if _HOLE_FACE_SET_NAME in final_part.sets.keys():
+    del final_part.sets[_HOLE_FACE_SET_NAME]
+
+_hole_wall_indices = []
+_hole_surface_segments = (
+    ('collar', R19, Y0, Y1),
+    ('shank', R13, Y1, Y2),
+    ('head', R22, Y2, Y3),
+)
+
+for _hole_id, (_hole_x, _hole_z) in enumerate(hole_points, start=1):
+    for _segment_name, _radius, _y_min, _y_max in _hole_surface_segments:
+        _y_mid = 0.5 * (_y_min + _y_max)
+        for _angle_deg in _HOLE_SAMPLE_ANGLES:
+            _angle = math.radians(_angle_deg)
+            _point = (
+                _hole_x + _radius * math.cos(_angle),
+                _y_mid,
+                _hole_z + _radius * math.sin(_angle),
+            )
+            _index = _append_nearest_face_index(
+                final_part,
+                _point,
+                'hole %d %s wall' % (_hole_id, _segment_name),
+            )
+            if _index not in _hole_wall_indices:
+                _hole_wall_indices.append(_index)
+
+_hole_wall_faces = final_part.faces.getSequenceFromMask(
+    mask=(_surface_indices_to_mask(_hole_wall_indices),)
+)
+final_part.Set(name=_HOLE_FACE_SET_NAME, faces=_hole_wall_faces)
+final_part.Surface(name=_HOLE_SURFACE_NAME, side1Faces=_hole_wall_faces)
+
+print('Created %s with %d cylindrical hole-wall faces.' % (
+    _HOLE_SURFACE_NAME, len(_hole_wall_faces)
+))
 
 mdb.save()

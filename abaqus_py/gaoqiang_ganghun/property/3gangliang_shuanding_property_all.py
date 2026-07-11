@@ -150,7 +150,7 @@ studMat.DuctileDamageInitiation(table=(
 
 studMat.ductileDamageInitiation.DamageEvolution(
     type=DISPLACEMENT,
-    table=((0.20,),)
+    table=((3.0,),)
 )
 
 # ------------------------------------------------------------

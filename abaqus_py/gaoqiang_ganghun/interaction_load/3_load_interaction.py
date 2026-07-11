@@ -27,12 +27,14 @@ surfConcreteSupportName = 'Surf-Concrete-Bottom-Support'
 setXSymConcreteName = 'Set-XSym-Concrete'
 setXSymSteelName = 'Set-XSym-Steel'
 setXSymRebarName = 'Set-XSym-Rebar'
+setSlipSteelNodeName = 'Set-Slip-Steel-Interface-Node'
+setSlipConcreteNodeName = 'Set-Slip-Concrete-Interface-Node'
 
 rpLoadSetName = 'RP_LOAD'
 rpSupportSetName = 'RP_SUPPORT'
 
 # Loading and output settings
-TIME_PERIOD = 0.02
+TIME_PERIOD = 0.10
 LOAD_U3 = -5.0
 FIELD_NUM_INTERVALS = 15
 HISTORY_NUM_INTERVALS = 600
@@ -259,6 +261,9 @@ for name in (
 
 for name in (
     'H-RP-Load-U3-RF3',
+    'H-RP-Load-RF3',
+    'H-Slip-Steel-U3',
+    'H-Slip-Concrete-U3',
     'H-Energy-Pushout',
     'H-Output-1',
     'H-Output-2',
@@ -287,6 +292,8 @@ concreteSupportSurf = require_surface(surfConcreteSupportName)
 
 rpLoadSet = require_set(rpLoadSetName)
 rpSupportSet = require_set(rpSupportSetName)
+slipSteelSet = require_set(setSlipSteelNodeName)
+slipConcreteSet = require_set(setSlipConcreteNodeName)
 
 ensure_default_general_contact_property()
 
@@ -463,6 +470,14 @@ model.FieldOutputRequest(
         'S',
         'PEEQ',
         'STATUS',
+        # Stud ductile damage and UHPC CDP damage.
+        'SDEG',
+        'DAMAGEC',
+        'DAMAGET',
+        # General-contact output groups. CPRESS and COPEN are available as
+        # components of CSTRESS and CDISP in Visualization.
+        'CSTRESS',
+        'CDISP',
     ),
     numIntervals=FIELD_NUM_INTERVALS
 )
@@ -470,11 +485,24 @@ model.FieldOutputRequest(
 model.HistoryOutputRequest(
     name='H-RP-Load-U3-RF3',
     createStepName=stepName,
-    variables=(
-        'U3',
-        'RF3',
-    ),
+    variables=('U3', 'RF3'),
     region=rpLoadSet,
+    numIntervals=HISTORY_NUM_INTERVALS
+)
+
+model.HistoryOutputRequest(
+    name='H-Slip-Steel-U3',
+    createStepName=stepName,
+    variables=('U3',),
+    region=slipSteelSet,
+    numIntervals=HISTORY_NUM_INTERVALS
+)
+
+model.HistoryOutputRequest(
+    name='H-Slip-Concrete-U3',
+    createStepName=stepName,
+    variables=('U3',),
+    region=slipConcreteSet,
     numIntervals=HISTORY_NUM_INTERVALS
 )
 
@@ -505,4 +533,8 @@ print('Load RP: U3 = %.3f, amplitude = %s' % (LOAD_U3, ampName))
 print('Support RP: U1=U2=U3=UR1=UR2=UR3=0')
 print('X symmetry: concrete/steel use XsymmBC; rebar uses U1=0')
 print('Field output: U, S, PEEQ, STATUS; intervals = %d' % FIELD_NUM_INTERVALS)
-print('History output: RP_LOAD U3/RF3 and energy; intervals = %d' % HISTORY_NUM_INTERVALS)
+print('History output: RP_LOAD U3/RF3, interface steel/concrete U3, and energy; intervals = %d' % HISTORY_NUM_INTERVALS)
+print('Slip output: slip = abs(U3(%s) - U3(%s))' % (
+    setSlipSteelNodeName,
+    setSlipConcreteNodeName
+))

@@ -227,3 +227,92 @@ if 'L_Angle_With_2_Studs-1' in a.instances.keys():
     del a.instances['L_Angle_With_2_Studs-1']
 
 mdb.save()
+
+# ============================================================
+# Appended contact surface: two studs' cylindrical sidewalls only
+# ============================================================
+
+import math
+
+_STUD_SURFACE_NAME = 'shuanding_surface'
+_STUD_FACE_SET_NAME = 'Set-shuanding_surface'
+_STUD_SAMPLE_ANGLES = (45.0, 135.0, 225.0, 315.0)
+
+
+def _surface_indices_to_mask(indices):
+    indices = sorted(list(set(indices)))
+    if len(indices) == 0:
+        raise RuntimeError('No faces were selected for %s.' % _STUD_SURFACE_NAME)
+
+    n_words = indices[-1] // 32 + 1
+    words = [0] * n_words
+    for index in indices:
+        words[index // 32] = words[index // 32] | (1 << (index % 32))
+
+    return '[#' + ' #'.join(['%x' % word for word in words]) + ' ]'
+
+
+def _append_nearest_face_index(part, point, description):
+    closest = part.faces.getClosest(
+        coordinates=(point,),
+        searchTolerance=1.0e-4,
+    )
+    if 0 not in closest:
+        raise RuntimeError('Cannot locate %s at %s.' % (description, point))
+
+    face, closest_point = closest[0]
+    distance2 = (
+        (closest_point[0] - point[0]) ** 2 +
+        (closest_point[1] - point[1]) ** 2 +
+        (closest_point[2] - point[2]) ** 2
+    )
+    if distance2 > 1.0e-8:
+        raise RuntimeError('%s is not on the intended cylindrical sidewall.' % description)
+
+    face_index = face.index
+    if callable(face_index):
+        face_index = face_index()
+    return int(face_index)
+
+
+if _STUD_SURFACE_NAME in merged_part.surfaces.keys():
+    del merged_part.surfaces[_STUD_SURFACE_NAME]
+if _STUD_FACE_SET_NAME in merged_part.sets.keys():
+    del merged_part.sets[_STUD_FACE_SET_NAME]
+
+_stud_wall_indices = []
+_stud_surface_segments = (
+    ('collar', 19.0 / 2.0, -5.0,   0.0),
+    ('shank',  13.0 / 2.0, -72.0, -5.0),
+    ('head',   22.0 / 2.0, -80.0, -72.0),
+)
+
+for _stud_id, _stud_z in enumerate((STUD1_Z, STUD2_Z), start=1):
+    for _segment_name, _radius, _y_min, _y_max in _stud_surface_segments:
+        _y_mid = 0.5 * (_y_min + _y_max)
+        for _angle_deg in _STUD_SAMPLE_ANGLES:
+            _angle = math.radians(_angle_deg)
+            _point = (
+                STUD_X + _radius * math.cos(_angle),
+                _y_mid,
+                _stud_z + _radius * math.sin(_angle),
+            )
+            _index = _append_nearest_face_index(
+                merged_part,
+                _point,
+                'stud %d %s sidewall' % (_stud_id, _segment_name),
+            )
+            if _index not in _stud_wall_indices:
+                _stud_wall_indices.append(_index)
+
+_stud_wall_faces = merged_part.faces.getSequenceFromMask(
+    mask=(_surface_indices_to_mask(_stud_wall_indices),)
+)
+merged_part.Set(name=_STUD_FACE_SET_NAME, faces=_stud_wall_faces)
+merged_part.Surface(name=_STUD_SURFACE_NAME, side1Faces=_stud_wall_faces)
+
+print('Created %s with %d cylindrical stud-sidewall faces.' % (
+    _STUD_SURFACE_NAME, len(_stud_wall_faces)
+))
+
+mdb.save()

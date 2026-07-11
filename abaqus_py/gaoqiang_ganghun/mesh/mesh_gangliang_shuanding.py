@@ -6,8 +6,8 @@ model_name = 'HSS_Stud'
 part_name = 'L_Angle_With_2_Studs'
 
 # Mesh size, unit: mm
-BEAM_MESH_SIZE = 20.0
-STUD_MESH_SIZE = 4.0
+BEAM_MESH_SIZE = 15
+STUD_MESH_SIZE = 3.0
 
 model = mdb.models[model_name]
 p = model.parts[part_name]
